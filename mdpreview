@@ -1,0 +1,130 @@
+#!/usr/bin/python3
+# coding: utf-8
+import sys
+import os
+import argparse
+import logging
+import json
+import time
+import markdown
+import jinja2
+import datetime
+import mimetypes
+
+log = logging.getLogger()
+
+class MockPageMeta:
+    def __init__(self, title):
+        self.title = title
+        self.date = datetime.datetime.now()
+        self.tags = []
+
+class MockPage:
+    def __init__(self, title):
+        self.meta = MockPageMeta(title)
+
+
+class Mdpreview:
+    def __init__(self, theme_dir, md_relpath):
+        self.theme_dir = os.path.abspath(theme_dir)
+        self.md_relpath = md_relpath
+        self.md_abspath = os.path.abspath(md_relpath)
+
+        title = "Markdown Preview " + self.md_relpath
+        self.mock_page = MockPage(title)
+
+        mimetypes.init()
+
+        # staticsite-like jinja2 environment
+        self.j2 = jinja2.Environment(
+            loader=jinja2.FileSystemLoader([self.theme_dir]),
+            autoescape=True,
+        )
+        self.j2.globals["SITE_NAME"] = title
+        self.j2.globals["SITE_URL"] = "http://localhost:8000"
+        self.j2.globals["url_for"] = lambda x: x
+        self.j2.globals["url_for_tags"] = lambda: ""
+        self.j2.globals["site_pages"] = lambda x: []
+        self.j2.globals["now"] = datetime.datetime.now()
+        self.j2.globals["page"] = self.mock_page
+        self.j2.filters["datetime_format"] = lambda x, y=None: str(x)
+
+        # Jinja2 page template
+        self.page_template = self.j2.get_template("page.html")
+
+        # markdown rendering engine
+        self.md = markdown.Markdown(
+            extensions=[
+                "markdown.extensions.extra",
+                "markdown.extensions.codehilite",
+                "markdown.extensions.fenced_code",
+            ],
+            output_format="html5",
+        )
+
+    def run(self):
+        self.reload()
+
+        from livereload import Server
+        server = Server(self.application)
+        server.watch(self.md_abspath, self.reload)
+        server.watch(self.theme_dir, self.reload)
+        server.serve(port=8000, host="localhost")
+
+    def application(self, environ, start_response):
+        path = environ.get("PATH_INFO", None)
+        if path is None:
+            start_response("404 not found", [("Content-Type", "text/plain")])
+            return [b"Not found"]
+
+        # Then filter out anything that isn't the site index
+        if path == "/" or path == "/index.html":
+            # Return the rendered markdown
+            self.md.reset()
+            with open(self.md_abspath, "rt") as fd:
+                md_html = self.md.convert(fd.read())
+
+            html = self.page_template.render(
+                content=md_html,
+            )
+
+            start_response("200 OK", [("Content-Type", "text/html")])
+            return [html.encode("utf-8")]
+
+        # Try serving static content from the theme directory
+        theme_abspath = os.path.join(self.theme_dir, "static", path.lstrip("/"))
+        if os.path.exists(theme_abspath):
+            with open(theme_abspath, "rb") as fd:
+                start_response("200 OK", [("Content-Type", mimetypes.guess_type(theme_abspath)[0])])
+                return [fd.read()]
+
+        # If all fails, 404
+        start_response("404 not found", [("Content-Type", "text/plain")])
+        return [b"Not found"]
+
+    def reload(self):
+        pass
+
+def main():
+    parser = argparse.ArgumentParser(description="Preview a markdown file in a browser.")
+    parser.add_argument("filename", metavar="filename.md", help="Markdown file to preview")
+    parser.add_argument("-t", "--theme", default="/usr/share/doc/staticsite/example/theme/", help="Theme directory")
+    parser.add_argument("-v", "--verbose", action="store_true", help="verbose output")
+    parser.add_argument("--debug", action="store_true", help="verbose output")
+
+    args = parser.parse_args()
+
+    FORMAT = "%(asctime)-15s %(levelname)s %(message)s"
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG, stream=sys.stderr, format=FORMAT)
+    elif args.verbose:
+        logging.basicConfig(level=logging.INFO, stream=sys.stderr, format=FORMAT)
+    else:
+        logging.basicConfig(level=logging.WARN, stream=sys.stderr, format=FORMAT)
+
+    preview = Mdpreview(args.theme, args.filename)
+    preview.run()
+
+
+if __name__ == "__main__":
+    main()
