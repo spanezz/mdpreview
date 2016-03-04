@@ -1,0 +1,21 @@
+Source: mdpreview
+Maintainer: Enrico Zini <enrico@debian.org>
+Section: web
+Priority: optional
+Build-Depends: debhelper (>= 9),
+               dh-python,
+               python3-all,
+               python3-setuptools,
+	       python3-markdown, python3-jinja2, python3-livereload
+Build-Depends-Indep: help2man
+Standards-Version: 3.9.7
+Vcs-Git: https://github.com/spanezz/mdpreview.git
+Vcs-Browser: https://github.com/spanezz/mdpreview
+
+Package: mdpreview
+Architecture: all
+Depends: staticsite, ${misc:Depends}, ${python3:Depends}
+Description: Markdown preview
+ Preview a Markdown file while you edit it.
+ .
+ Markdown content is rendered using the same themes as staticsite.
