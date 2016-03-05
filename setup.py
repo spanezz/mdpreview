@@ -5,7 +5,7 @@ import sys
 
 setup(
     name = "mdpreview",
-    requires=[ 'markdown', 'jinja2', 'livereload' ],
+    requires=[ 'markdown', 'jinja2', 'livereload', 'staticsite' ],
     version = "0.1",
     description = "Preview a Markdown file while you edit it",
     author = ["Enrico Zini"],

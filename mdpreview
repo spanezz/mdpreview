@@ -13,62 +13,25 @@ import mimetypes
 
 log = logging.getLogger()
 
-class MockPageMeta:
-    def __init__(self, title):
-        self.title = title
-        self.date = datetime.datetime.now()
-        self.tags = []
-
-class MockPage:
-    def __init__(self, title):
-        self.meta = MockPageMeta(title)
-
 
 class Mdpreview:
-    def __init__(self, theme_dir, md_relpath):
-        self.theme_dir = os.path.abspath(theme_dir)
-        self.md_relpath = md_relpath
-        self.md_abspath = os.path.abspath(md_relpath)
+    def __init__(self, args):
+        from staticsite.core import settings
+        self.root = args.dir
+        self.theme_root = os.path.abspath(args.theme)
 
-        title = "Markdown Preview " + self.md_relpath
-        self.mock_page = MockPage(title)
-
-        mimetypes.init()
-
-        # staticsite-like jinja2 environment
-        self.j2 = jinja2.Environment(
-            loader=jinja2.FileSystemLoader([self.theme_dir]),
-            autoescape=True,
-        )
-        self.j2.globals["SITE_NAME"] = title
-        self.j2.globals["SITE_URL"] = "http://localhost:8000"
-        self.j2.globals["url_for"] = lambda x: x
-        self.j2.globals["url_for_tags"] = lambda: ""
-        self.j2.globals["site_pages"] = lambda x: []
-        self.j2.globals["now"] = datetime.datetime.now()
-        self.j2.globals["page"] = self.mock_page
-        self.j2.filters["datetime_format"] = lambda x, y=None: str(x)
-
-        # Jinja2 page template
-        self.page_template = self.j2.get_template("page.html")
-
-        # markdown rendering engine
-        self.md = markdown.Markdown(
-            extensions=[
-                "markdown.extensions.extra",
-                "markdown.extensions.codehilite",
-                "markdown.extensions.fenced_code",
-            ],
-            output_format="html5",
-        )
+        settings.SITE_NAME = "Markdown Preview " + self.root
+        settings.SITE_URL = "http://localhost:8000"
 
     def run(self):
+        mimetypes.init()
+
         self.reload()
 
         from livereload import Server
         server = Server(self.application)
-        server.watch(self.md_abspath, self.reload)
-        server.watch(self.theme_dir, self.reload)
+        server.watch(self.root, self.reload)
+        server.watch(self.theme_root, self.reload)
         server.serve(port=8000, host="localhost")
 
     def application(self, environ, start_response):
@@ -77,37 +40,41 @@ class Mdpreview:
             start_response("404 not found", [("Content-Type", "text/plain")])
             return [b"Not found"]
 
-        # Then filter out anything that isn't the site index
-        if path == "/" or path == "/index.html":
-            # Return the rendered markdown
-            self.md.reset()
-            with open(self.md_abspath, "rt") as fd:
-                md_html = self.md.convert(fd.read())
+        content = self.pages.serve_path(path, environ, start_response)
+        if content is not None:
+            return content
 
-            html = self.page_template.render(
-                content=md_html,
-            )
-
-            start_response("200 OK", [("Content-Type", "text/html")])
-            return [html.encode("utf-8")]
-
-        # Try serving static content from the theme directory
-        theme_abspath = os.path.join(self.theme_dir, "static", path.lstrip("/"))
-        if os.path.exists(theme_abspath):
-            with open(theme_abspath, "rb") as fd:
-                start_response("200 OK", [("Content-Type", mimetypes.guess_type(theme_abspath)[0])])
-                return [fd.read()]
-
-        # If all fails, 404
         start_response("404 not found", [("Content-Type", "text/plain")])
         return [b"Not found"]
 
     def reload(self):
-        pass
+        from staticsite.site import Site
+        from staticsite.utils import timings
+        from staticsite.core import PageFS
+        import gc
+
+        log.info("Loading site")
+        # Instantiate site
+        self.site = Site(self.root, self.theme_root)
+
+        # Read and analyze site contents
+        with timings("Read site tree in %fs"):
+            self.site.read_site_tree(self.root)
+            self.site.read_asset_tree(os.path.join(self.theme_root, "static"))
+
+        with timings("Analysed site tree in %fs"):
+            self.site.analyze()
+        gc.collect()
+
+        self.pages = PageFS()
+        self.pages.add_site(self.site)
+
+
+
 
 def main():
     parser = argparse.ArgumentParser(description="Preview a markdown file in a browser.")
-    parser.add_argument("filename", metavar="filename.md", help="Markdown file to preview")
+    parser.add_argument("dir", nargs="?", default=os.getcwd(), help="Directory with the files to preview (defaults to current directory)")
     parser.add_argument("-t", "--theme", default="/usr/share/doc/staticsite/example/theme/", help="Theme directory")
     parser.add_argument("-v", "--verbose", action="store_true", help="verbose output")
     parser.add_argument("--debug", action="store_true", help="verbose output")
@@ -122,7 +89,7 @@ def main():
     else:
         logging.basicConfig(level=logging.WARN, stream=sys.stderr, format=FORMAT)
 
-    preview = Mdpreview(args.theme, args.filename)
+    preview = Mdpreview(args)
     preview.run()
 
 
