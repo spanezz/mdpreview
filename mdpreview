@@ -55,12 +55,12 @@ class Mdpreview:
 
         log.info("Loading site")
         # Instantiate site
-        self.site = Site(self.root, self.theme_root)
+        self.site = Site()
 
         # Read and analyze site contents
-        with timings("Read site tree in %fs"):
-            self.site.read_site_tree(self.root)
-            self.site.read_asset_tree(os.path.join(self.theme_root, "static"))
+        with timings("Read site in %fs"):
+            self.site.load_theme(self.theme_root)
+            self.site.load_content(self.root)
 
         with timings("Analysed site tree in %fs"):
             self.site.analyze()
